@@ -483,65 +483,67 @@ export default function App() {
           <div className="flex justify-between items-center mb-4 border-b pb-2 sticky top-0 bg-slate-50 z-20">
             <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Sin Asignar o Parcial</h2>
             {selectedForDeletion.length > 0 && (
-              <button 
-                onClick={() => {
-                  setConfirmDeleteDialog({
-                    message: `¿Estás seguro que quieres eliminar las piezas sin asignar de los ${selectedForDeletion.length} artículos seleccionados? Se pondrá su stock sin asignar en cero.`,
-                    onConfirm: () => {
-                      setLoadingAction(true);
-                    
-                    const updates = selectedForDeletion.map(uid => {
-                      const prod = unallocatedProducts.find(p => p._uid === uid);
-                      if (!prod) return null;
-                      const activeAlmacenPrefix = activeAlmacen ? `${activeAlmacen.id}-` : '';
-                      const otherLocs = prod.locs ? prod.locs.filter(l => !l.pasillo.startsWith(activeAlmacenPrefix)) : [];
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    setConfirmDeleteDialog({
+                      message: `¿Estás seguro que quieres eliminar las piezas sin asignar de los ${selectedForDeletion.length} artículos seleccionados? Se pondrá su stock sin asignar en cero.`,
+                      onConfirm: () => {
+                        setLoadingAction(true);
                       
-                      return {
-                        _uid: prod._uid,
-                        Ubicaciones_App: stringifyLocations(prod.locs),
-                        stockColumn: activeAlmacen?.stockColumn || 'WHSAL/Stock',
-                        newStock: prod.allocatedCount // Reset totalStock to equal allocatedCount, effectively removing unallocated pieces
-                      };
-                    }).filter(Boolean);
+                      const updates = selectedForDeletion.map(uid => {
+                        const prod = unallocatedProducts.find(p => p._uid === uid);
+                        if (!prod) return null;
+                        const activeAlmacenPrefix = activeAlmacen ? `${activeAlmacen.id}-` : '';
+                        const otherLocs = prod.locs ? prod.locs.filter(l => !l.pasillo.startsWith(activeAlmacenPrefix)) : [];
+                        
+                        return {
+                          _uid: prod._uid,
+                          Ubicaciones_App: stringifyLocations(prod.locs),
+                          stockColumn: activeAlmacen?.stockColumn || 'WHSAL/Stock',
+                          newStock: prod.allocatedCount // Reset totalStock to equal allocatedCount, effectively removing unallocated pieces
+                        };
+                      }).filter(Boolean);
 
-                    fetch('/api/inventory/update-bulk', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ updates })
-                    })
-                    .then(res => res.json())
-                    .then(data => {
-                      if (data.success) {
-                        setInventory(prev => {
-                          const updatedUids = data.products.map(p => p._uid);
-                          return prev.map(p => updatedUids.includes(p._uid) ? data.products.find(up => up._uid === p._uid) : p);
-                        });
-                        setSelectedForDeletion([]);
-                      } else {
-                        alert("Error: " + data.error);
+                      fetch('/api/inventory/update-bulk', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ updates })
+                      })
+                      .then(res => res.json())
+                      .then(data => {
+                        if (data.success) {
+                          setInventory(prev => {
+                            const updatedUids = data.products.map(p => p._uid);
+                            return prev.map(p => updatedUids.includes(p._uid) ? data.products.find(up => up._uid === p._uid) : p);
+                          });
+                          setSelectedForDeletion([]);
+                        } else {
+                          alert("Error: " + data.error);
+                        }
+                      })
+                      .finally(() => setLoadingAction(false));
                       }
-                    })
-                    .finally(() => setLoadingAction(false));
-                    }
-                  });
-                }}
-                className="text-[10px] bg-red-100 text-red-700 px-2 py-1 rounded font-bold hover:bg-red-200 transition-colors border border-red-200"
-              >
-                Eliminar ({selectedForDeletion.length})
-              </button>
-              
-              <button 
-                onClick={() => {
-                  const itemsToTransfer = selectedForDeletion.map(uid => {
-                    const prod = unallocatedProducts.find(p => p._uid === uid);
-                    return { _uid: uid, qty: prod.unallocatedQty, name: prod.displayName };
-                  });
-                  setTransferDialog({ items: itemsToTransfer, sourceAlmacenId: selectedAlmacenId });
-                }}
-                className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-1 rounded font-bold hover:bg-emerald-200 transition-colors border border-emerald-200 flex items-center gap-1"
-              >
-                <ArrowRightLeft className="w-3 h-3"/> Traspasar ({selectedForDeletion.length})
-              </button>
+                    });
+                  }}
+                  className="text-[10px] bg-red-100 text-red-700 px-2 py-1 rounded font-bold hover:bg-red-200 transition-colors border border-red-200"
+                >
+                  Eliminar ({selectedForDeletion.length})
+                </button>
+                
+                <button 
+                  onClick={() => {
+                    const itemsToTransfer = selectedForDeletion.map(uid => {
+                      const prod = unallocatedProducts.find(p => p._uid === uid);
+                      return { _uid: uid, qty: prod.unallocatedQty, name: prod.displayName };
+                    });
+                    setTransferDialog({ items: itemsToTransfer, sourceAlmacenId: selectedAlmacenId });
+                  }}
+                  className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-1 rounded font-bold hover:bg-emerald-200 transition-colors border border-emerald-200 flex items-center gap-1"
+                >
+                  <ArrowRightLeft className="w-3 h-3"/> Traspasar ({selectedForDeletion.length})
+                </button>
+              </div>
             )}
           </div>
           {!isDataLoaded ? (
