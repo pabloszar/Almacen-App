@@ -1278,8 +1278,6 @@ function ConfigModal({ config, csvColumns, onClose, onSave }) {
   );
 }
 
-}
-
 // New Transfer Modal Component
 function TransferModal({ transferData, appConfig, onClose, onConfirm, loading }) {
   const [targetAlmacenId, setTargetAlmacenId] = useState('');
