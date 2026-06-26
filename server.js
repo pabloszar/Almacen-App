@@ -161,6 +161,59 @@ app.post('/api/inventory/update-bulk', async (req, res) => {
   }
 });
 
+// POST to transfer stock between warehouses
+app.post('/api/inventory/transfer', async (req, res) => {
+  const { transfers, sourceColumn, targetColumn } = req.body;
+  if (!transfers || !Array.isArray(transfers) || !sourceColumn || !targetColumn) {
+    return res.status(400).json({ error: 'Missing transfer data or columns' });
+  }
+
+  try {
+    const chunkSize = 10; // Airtable max
+    const updatedProducts = [];
+
+    // Fetch the current state of these records from Airtable to accurately compute new totals
+    // We fetch one by one or chunked, but since transfers are usually small, we can fetch all needed IDs.
+    const ids = transfers.map(t => t._uid);
+    // Airtable filter formula for multiple IDs: RECORD_ID() = 'id1' OR RECORD_ID() = 'id2'...
+    const filterFormula = "OR(" + ids.map(id => `RECORD_ID() = '${id}'`).join(',') + ")";
+    
+    const currentRecords = await base(INVENTORY_TABLE).select({
+      filterByFormula: filterFormula
+    }).all();
+
+    for (let i = 0; i < transfers.length; i += chunkSize) {
+      const chunk = transfers.slice(i, i + chunkSize);
+      const recordsToUpdate = chunk.map(transfer => {
+        const record = currentRecords.find(r => r.id === transfer._uid);
+        if (!record) return null;
+        
+        const currentSourceVal = Number(record.get(sourceColumn)) || 0;
+        const currentTargetVal = Number(record.get(targetColumn)) || 0;
+        
+        const fields = {};
+        // Subtract from source, add to target
+        fields[sourceColumn] = Math.max(0, currentSourceVal - transfer.qty);
+        fields[targetColumn] = currentTargetVal + transfer.qty;
+        
+        return { id: transfer._uid, fields };
+      }).filter(Boolean);
+
+      if (recordsToUpdate.length > 0) {
+        const updatedRecords = await base(INVENTORY_TABLE).update(recordsToUpdate);
+        updatedRecords.forEach(record => {
+          updatedProducts.push({ ...record.fields, _uid: record.id });
+        });
+      }
+    }
+
+    res.json({ success: true, products: updatedProducts });
+  } catch (error) {
+    console.error('Error in bulk transfer:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 // Solo iniciamos el servidor si NO estamos en Vercel (Vercel usa la app exportada directamente)
 if (process.env.NODE_ENV !== 'production') {

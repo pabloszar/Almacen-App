@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Search, Map, Info, Package, Layers, Save, X, Plus, Settings, GripVertical, AlertTriangle, Building2, ChevronDown } from 'lucide-react';
+import { Search, Map, Info, Package, Layers, Save, X, Plus, Settings, GripVertical, AlertTriangle, Building2, ChevronDown, ArrowRightLeft } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 
 export default function App() {
@@ -17,6 +17,7 @@ export default function App() {
   const [isAlmacenSelectorOpen, setIsAlmacenSelectorOpen] = useState(false);
   const [selectedForDeletion, setSelectedForDeletion] = useState([]);
   const [confirmDeleteDialog, setConfirmDeleteDialog] = useState(null);
+  const [transferDialog, setTransferDialog] = useState(null); // { items: [{_uid, qty}], sourceAlmacenId }
 
   useEffect(() => {
     fetchData();
@@ -528,6 +529,19 @@ export default function App() {
               >
                 Eliminar ({selectedForDeletion.length})
               </button>
+              
+              <button 
+                onClick={() => {
+                  const itemsToTransfer = selectedForDeletion.map(uid => {
+                    const prod = unallocatedProducts.find(p => p._uid === uid);
+                    return { _uid: uid, qty: prod.unallocatedQty, name: prod.displayName };
+                  });
+                  setTransferDialog({ items: itemsToTransfer, sourceAlmacenId: selectedAlmacenId });
+                }}
+                className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-1 rounded font-bold hover:bg-emerald-200 transition-colors border border-emerald-200 flex items-center gap-1"
+              >
+                <ArrowRightLeft className="w-3 h-3"/> Traspasar ({selectedForDeletion.length})
+              </button>
             )}
           </div>
           {!isDataLoaded ? (
@@ -572,7 +586,22 @@ export default function App() {
                               <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">
                                 Faltan: {prod.unallocatedQty}
                               </span>
-                              <span className="text-[10px] text-slate-500">Total: {prod.totalStock}</span>
+                              <div className="flex items-center gap-2">
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setTransferDialog({ 
+                                      items: [{ _uid: prod._uid, qty: prod.unallocatedQty, name: prod.displayName }], 
+                                      sourceAlmacenId: selectedAlmacenId 
+                                    });
+                                  }}
+                                  className="text-[10px] bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold transition-colors border border-emerald-200"
+                                  title="Transferir a otro almacén"
+                                >
+                                  <ArrowRightLeft className="w-3 h-3"/>
+                                </button>
+                                <span className="text-[10px] text-slate-500">Total: {prod.totalStock}</span>
+                              </div>
                             </div>
                           </div>
                         )}
@@ -736,6 +765,53 @@ export default function App() {
           appConfig={appConfig}
           onClose={() => setSelectedProduct(null)} 
           onSave={handleUpdateLocations} 
+          onTransfer={(prod) => {
+            setSelectedProduct(null);
+            setTransferDialog({ 
+              items: [{ _uid: prod._uid, qty: prod.unallocatedQty, name: prod.displayName }], 
+              sourceAlmacenId: selectedAlmacenId 
+            });
+          }}
+          loading={loadingAction}
+        />
+      )}
+
+      {/* Transfer Modal */}
+      {transferDialog && (
+        <TransferModal
+          transferData={transferDialog}
+          appConfig={appConfig}
+          onClose={() => setTransferDialog(null)}
+          onConfirm={(targetAlmacenId, items) => {
+            setLoadingAction(true);
+            const sourceAlm = appConfig.almacenes.find(a => a.id === transferDialog.sourceAlmacenId);
+            const targetAlm = appConfig.almacenes.find(a => a.id === targetAlmacenId);
+            
+            fetch('/api/inventory/transfer', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                transfers: items,
+                sourceColumn: sourceAlm.stockColumn,
+                targetColumn: targetAlm.stockColumn
+              })
+            })
+            .then(res => res.json())
+            .then(data => {
+              if (data.success) {
+                setInventory(prev => {
+                  const updatedUids = data.products.map(p => p._uid);
+                  return prev.map(p => updatedUids.includes(p._uid) ? data.products.find(up => up._uid === p._uid) : p);
+                });
+                setTransferDialog(null);
+                setSelectedForDeletion([]); // Clear bulk selection if any
+              } else {
+                alert("Error transfiriendo: " + data.error);
+              }
+            })
+            .catch(err => alert("Error de conexión."))
+            .finally(() => setLoadingAction(false));
+          }}
           loading={loadingAction}
         />
       )}
@@ -1200,8 +1276,108 @@ function ConfigModal({ config, csvColumns, onClose, onSave }) {
   );
 }
 
+}
+
+// New Transfer Modal Component
+function TransferModal({ transferData, appConfig, onClose, onConfirm, loading }) {
+  const [targetAlmacenId, setTargetAlmacenId] = useState('');
+  
+  // We allow adjusting quantities per item if multiple, but default to max unallocated
+  const [items, setItems] = useState(transferData.items.map(item => ({...item})));
+
+  const sourceAlmacen = appConfig.almacenes?.find(a => a.id === transferData.sourceAlmacenId);
+  const targetOptions = appConfig.almacenes?.filter(a => a.id !== transferData.sourceAlmacenId) || [];
+
+  const handleQtyChange = (index, val) => {
+    const maxQty = transferData.items[index].qty;
+    let newQty = parseInt(val, 10);
+    if (isNaN(newQty) || newQty < 1) newQty = 1;
+    if (newQty > maxQty) newQty = maxQty;
+    
+    setItems(prev => {
+      const n = [...prev];
+      n[index].qty = newQty;
+      return n;
+    });
+  };
+
+  const handleConfirm = () => {
+    if (!targetAlmacenId) return alert("Selecciona un almacén destino");
+    onConfirm(targetAlmacenId, items);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 z-[80] flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg overflow-hidden animate-in">
+        <div className="p-4 border-b border-slate-200 bg-slate-800 text-white flex items-center gap-2">
+           <ArrowRightLeft className="w-5 h-5 text-emerald-400" />
+           <h4 className="font-bold">Traspaso de Mercancía</h4>
+        </div>
+        <div className="p-6">
+          <div className="mb-6">
+            <p className="text-sm text-slate-500 font-bold uppercase mb-1">Origen</p>
+            <p className="text-lg font-black text-slate-800">{sourceAlmacen?.name}</p>
+          </div>
+          
+          <div className="mb-6">
+            <p className="text-sm text-slate-500 font-bold uppercase mb-2">Destino</p>
+            <select 
+              className="w-full border border-slate-300 p-3 rounded-lg focus:ring-emerald-500 focus:border-emerald-500 font-bold text-slate-700"
+              value={targetAlmacenId}
+              onChange={e => setTargetAlmacenId(e.target.value)}
+            >
+              <option value="" disabled>Selecciona un almacén...</option>
+              {targetOptions.map(a => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+            {targetOptions.length === 0 && <p className="text-xs text-red-500 mt-1">No hay otros almacenes configurados.</p>}
+          </div>
+
+          <div className="mb-2">
+            <p className="text-sm text-slate-500 font-bold uppercase">Artículos a transferir ({items.length})</p>
+            <p className="text-xs text-amber-600 font-bold italic mb-3 bg-amber-50 p-2 rounded">Solo se puede transferir el stock que está "Sin Asignar".</p>
+            <div className="max-h-48 overflow-y-auto space-y-2 pr-2 hide-scrollbar">
+              {items.map((item, i) => (
+                <div key={item._uid} className="flex justify-between items-center bg-slate-50 p-3 rounded border border-slate-200">
+                  <div className="flex-1 pr-4">
+                    <p className="text-sm font-bold text-slate-800 leading-tight">{item.name}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-400">Qty:</span>
+                    <input 
+                      type="number" 
+                      min="1" 
+                      max={transferData.items[i].qty}
+                      value={item.qty}
+                      onChange={e => handleQtyChange(i, e.target.value)}
+                      className="w-16 p-1 border border-slate-300 rounded text-center font-bold text-emerald-700"
+                    />
+                    <span className="text-xs text-slate-400 block w-10 text-right">/ {transferData.items[i].qty}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="p-4 bg-slate-50 border-t flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-200 rounded transition-colors">Cancelar</button>
+          <button 
+            onClick={handleConfirm} 
+            disabled={loading || !targetAlmacenId || items.length === 0} 
+            className="px-6 py-2 text-sm font-bold text-white rounded bg-emerald-600 hover:bg-emerald-700 shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50"
+          >
+            {loading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/> : <ArrowRightLeft className="w-4 h-4"/>}
+            Confirmar Traspaso
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Existing Assignment Modal (Adapted with Dropdowns)
-function AssignmentModal({ product, activeAlmacenId, appConfig, onClose, onSave, loading }) {
+function AssignmentModal({ product, activeAlmacenId, appConfig, onClose, onSave, onTransfer, loading }) {
   const totalStock = product.totalStock; 
   
   const activeAlmacenPrefix = activeAlmacenId ? `${activeAlmacenId}-` : '';
@@ -1288,7 +1464,16 @@ function AssignmentModal({ product, activeAlmacenId, appConfig, onClose, onSave,
                 Eliminar Sin Asignar
               </button>
             )}
-            <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
+            {originalUnallocated > 0 && appConfig.almacenes?.length > 1 && (
+              <button 
+                onClick={() => onTransfer(product)}
+                className="text-xs font-bold bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1 rounded transition-colors shadow-sm flex items-center gap-1 border border-emerald-500"
+                title="Transferir stock sin asignar a otro almacén"
+              >
+                <ArrowRightLeft className="w-3 h-3"/> Transferir
+              </button>
+            )}
+            <button onClick={onClose} className="text-slate-400 hover:text-white ml-2"><X className="w-5 h-5"/></button>
           </div>
         </div>
         
