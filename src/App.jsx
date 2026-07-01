@@ -18,6 +18,7 @@ export default function App() {
   const [selectedForDeletion, setSelectedForDeletion] = useState([]);
   const [confirmDeleteDialog, setConfirmDeleteDialog] = useState(null);
   const [transferDialog, setTransferDialog] = useState(null); // { items: [{_uid, qty}], sourceAlmacenId }
+  const [airtableColumns, setAirtableColumns] = useState([]);
 
   useEffect(() => {
     fetchData();
@@ -40,12 +41,26 @@ export default function App() {
         console.error(err);
         alert("Error cargando datos. Asegúrate de que el servidor local (Node) esté corriendo.");
       });
+
+    // Todas las columnas de Airtable (incluye columnas completamente vacías,
+    // que la API de registros no devuelve).
+    fetch('/api/columns')
+      .then(res => res.json())
+      .then(cols => { if (Array.isArray(cols)) setAirtableColumns(cols); })
+      .catch(err => console.error('Error cargando columnas de Airtable:', err));
   };
 
   const csvColumns = useMemo(() => {
-    if (inventory.length === 0) return [];
-    return Object.keys(inventory[0]).filter(k => k !== '_uid' && k !== 'Ubicaciones_App');
-  }, [inventory]);
+    const ignored = new Set(['_uid', 'Ubicaciones_App']);
+    // Preferimos el esquema completo de Airtable; si no está disponible,
+    // caemos a derivar las columnas de todos los registros del inventario.
+    if (airtableColumns.length > 0) {
+      return airtableColumns.filter(k => !ignored.has(k));
+    }
+    const keys = new Set();
+    inventory.forEach(item => Object.keys(item).forEach(k => keys.add(k)));
+    return Array.from(keys).filter(k => !ignored.has(k));
+  }, [airtableColumns, inventory]);
 
   const parseLocations = (locStr, configFloors, configAisles) => {
     if (!locStr) return [];
@@ -1142,7 +1157,7 @@ function ConfigModal({ config, csvColumns, onClose, onSave }) {
                       {alm.name} <span className="text-xs font-mono text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded ml-2">ID: {alm.id}</span>
                     </h5>
                     <div className="mt-2 flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-600">Columna de Stock CSV:</span>
+                      <span className="text-xs font-bold text-slate-600">Columna de Stock Airtable:</span>
                       <select 
                         value={alm.stockColumn || ''} 
                         onChange={(e) => updateAlmacenColumn(alm.id, e.target.value)}
@@ -1230,7 +1245,7 @@ function ConfigModal({ config, csvColumns, onClose, onSave }) {
                     <input type="text" className="w-full border border-slate-300 p-2 rounded focus:ring-emerald-500 focus:outline-none focus:ring-2" value={formInput2} onChange={e => setFormInput2(e.target.value)} />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-600 mb-1 block">Columna de Stock en CSV</label>
+                    <label className="text-xs font-bold text-slate-600 mb-1 block">Columna de Stock en Airtable</label>
                     <select className="w-full border border-slate-300 p-2 rounded" value={formInput3} onChange={e => setFormInput3(e.target.value)}>
                       {csvColumns.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>

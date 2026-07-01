@@ -74,6 +74,35 @@ app.post('/api/config', async (req, res) => {
   }
 });
 
+// GET all column (field) names of the Inventory table from Airtable's schema.
+// This includes columns that are completely empty across all records, which the
+// records API would not return.
+app.get('/api/columns', async (req, res) => {
+  try {
+    const response = await fetch(
+      `https://api.airtable.com/v0/meta/bases/${process.env.AIRTABLE_BASE_ID}/tables`,
+      { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } }
+    );
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Airtable meta API ${response.status}: ${text}`);
+    }
+
+    const data = await response.json();
+    const table = data.tables?.find(t => t.name === INVENTORY_TABLE);
+    if (!table) {
+      return res.status(404).json({ error: `Table '${INVENTORY_TABLE}' not found` });
+    }
+
+    const columns = table.fields.map(f => f.name);
+    res.json(columns);
+  } catch (error) {
+    console.error('Error fetching columns:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET all inventory
 app.get('/api/inventory', async (req, res) => {
   try {
